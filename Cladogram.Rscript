@@ -1,0 +1,215 @@
+#! /usr/bin/Rscript-4.1
+args <- commandArgs(TRUE)
+
+
+WORK <- args[1]
+Phenotype <- args[2]
+
+setwd(WORK)
+
+library("wesanderson")
+library(dplyr)
+library(phyloseq)
+library(bigreadr)
+library(ggtreeExtra)
+library(ggtree)
+library(tidytree)
+library(ggplot2)
+library(ggnewscale)
+library(httpgd)
+library(Polychrome)
+library(RColorBrewer)
+library(ape)
+library("tidyverse")
+
+hgd(webserver = T)
+
+nodeid.tbl_tree <- utils::getFromNamespace("nodeid.tbl_tree", "tidytree")
+rootnode.tbl_tree <- utils::getFromNamespace("rootnode.tbl_tree", "tidytree")
+offspring.tbl_tree <- utils::getFromNamespace("offspring.tbl_tree", "tidytree")
+offspring.tbl_tree_item <- utils::getFromNamespace(".offspring.tbl_tree_item", "tidytree")
+child.tbl_tree <- utils::getFromNamespace("child.tbl_tree", "tidytree")
+parent.tbl_tree <- utils::getFromNamespace("parent.tbl_tree", "tidytree")
+##
+ASV <- read.table(file = "/kimlab_wd/rhdfyd/Case_control_metagenomics/IBD_control/metagenome/ANCOM_BC/R_based/feature-table.tsv", sep = "\t", header = T, row.names = 1, 
+                  skip = 1, comment.char = "")
+taxonomy <- read.table(file = "/kimlab_wd/rhdfyd/Case_control_metagenomics/IBD_control/metagenome/ANCOM_BC/R_based/taxonomy.tsv", sep = "\t", header = T ,row.names = 1)
+tax <- taxonomy %>%
+  select(Taxon) %>% tidyr::separate(Taxon, c("Kingdom","Phylum","Class","Order","Family","Genus","Species"), 
+                                  sep = "; ", remove=F, extra = "merge", fill="warn")
+
+tax[which(is.na(tax$Phylum)),3] <- "u__"
+tax[which(is.na(tax$Class)),4] <- "u__"
+tax[which(is.na(tax$Order)),5] <- "u__"
+tax[which(is.na(tax$Family)),6] <- "u__"
+tax[which(is.na(tax$Genus)),7] <- "u__"
+tax[which(is.na(tax$Species)),8] <- "u__"
+tax$Taxon <- paste(tax$Kingdom,tax$Phylum,tax$Class,tax$Order,tax$Family,tax$Genus,sep=";")
+tax <- subset(tax, select=-Species)
+
+for (i in 1:nrow(tax)){
+  if (tax[i,3] == "p__"){
+    kingdom <- paste0("Unclassified_", tax[i,2])
+    tax[i, 3:7] <- kingdom
+  } else if (tax[i,4] == "c__"){
+    phylum <- paste0("Unclassified_", tax[i,3])
+    tax[i, 4:7] <- phylum
+  } else if (tax[i,5] == "o__"){
+    class <- paste0("Unclassified_", tax[i,4])
+    tax[i, 5:7] <- class
+  } else if (tax[i,6] == "f__"){
+    family <- paste0("Unclassified_", tax[i,5])
+    tax[i, 6:7] <- family
+  } else if (tax[i,7] == "g__"){
+    genus <- paste0("Unclassified_", tax[i,6])
+    tax[i, 7] <- genus
+  }
+}
+for (i in 1:nrow(tax)){
+  if (tax[i,3] == "u__"){
+    kingdom <- paste0("Unclassified_", tax[i,2], "[2]")
+    tax[i, 3:7] <- kingdom
+  } else if (tax[i,4] == "u__"){
+    phylum <- paste0("Unclassified_", tax[i,3], "[2]")
+    tax[i, 4:7] <- phylum
+  } else if (tax[i,5] == "u__"){
+    class <- paste0("Unclassified_", tax[i,4], "[2]")
+    tax[i, 5:7] <- class
+  } else if (tax[i,6] == "u__"){
+    family <- paste0("Unclassified_", tax[i,5], "[2]")
+    tax[i, 6:7] <- family
+  } else if (tax[i,7] == "u__"){
+    genus <- paste0("Unclassified_", tax[i,6], "[2]")
+    tax[i, 7] <- genus
+  }
+}
+temp_tax <- tax %>% as.data.frame() %>% subset(.,select=-Taxon)
+tax <- temp_tax %>% as.data.frame() %>% subset(.,select=-Kingdom)
+
+tax$Phylum <- paste(temp_tax$Kingdom,temp_tax$Phylum,sep=";")
+tax$Class <- paste(temp_tax$Kingdom,temp_tax$Phylum,temp_tax$Class,sep=";")
+tax$Order <- paste(temp_tax$Kingdom,temp_tax$Phylum,temp_tax$Class,temp_tax$Order,sep=";")
+tax$Family <- paste(temp_tax$Kingdom,temp_tax$Phylum,temp_tax$Class,temp_tax$Order,temp_tax$Family,sep=";")
+tax$Genus <- paste(temp_tax$Kingdom,temp_tax$Phylum,temp_tax$Class,temp_tax$Order,temp_tax$Family,temp_tax$Genus,sep=";")
+
+metadata <- read.table(file = "/kimlab_wd/rhdfyd/Case_control_metagenomics/IBD_control/metagenome/ANCOM_BC/R_based/Case_control_clinic_total_for_ancombc.txt", sep = "\t", header = T, row.names = 1)
+
+OTU = otu_table(as.matrix(ASV), taxa_are_rows = TRUE)
+TAX = tax_table(as.matrix(tax))
+SAMPLE <- sample_data(metadata)
+TREE = read_tree("/kimlab_wd/rhdfyd/Case_control_metagenomics/IBD_control/metagenome/ANCOM_BC/R_based/tree.nwk")
+
+ps <- phyloseq(OTU, TAX, SAMPLE,TREE)
+ps.taxa <- tax_glom(ps, taxrank = 'Genus', NArm = FALSE)
+
+# saveRDS(ps.taxa, "/kimlab_wd/rhdfyd/IBD_study/IBD_psy/cladogram/DESeq2/denoised_table_w_clinic_phyloseq_wo_tree.rds")
+tax <- tax_table(ps.taxa) %>% as.data.frame() 
+tax$id <- rownames(tax)
+tax %>% head
+tax <-  tax[,c("id","Genus")]
+
+# tax %>% head
+taxa_metadata <- fread2("/kimlab_wd/rhdfyd/IBD_study/IBD_psy/DESeqBH_ANCOMBC2holm_results.txt",sep="\t")
+taxa_metadata %>% head
+perm <- fread2("/kimlab_wd/rhdfyd/IBD_study/IBD_psy/DESeq2_w_duration_perm_r.txt",sep = "\t")
+
+G_taxa <- inner_join(tax,taxa_metadata,by=c("Genus"="taxon"))
+G_taxa <- G_taxa[,c(1,2,17:30)]
+
+G_taxa <- left_join(G_taxa,perm[,c(1,19,21)],by=c("name"="name"))
+G_taxa <- G_taxa %>% tidyr::separate(Genus, c("Kingdom","Phylum","Class","Order","Family","Genus"), 
+                                  sep = ";", remove=F, extra = "merge", fill="warn")
+
+OTU = otu_table(as.matrix(ASV), taxa_are_rows = TRUE)
+rownames(G_taxa) <- G_taxa$id
+G_taxa %>% head
+
+TAX = tax_table(as.matrix(G_taxa[,c("Genus","Phylum")]))
+SAMPLE <- sample_data(metadata)
+TREE = read_tree("/kimlab_wd/rhdfyd/Case_control_metagenomics/IBD_control/metagenome/ANCOM_BC/R_based/tree.nwk")
+new_ps <- phyloseq(OTU, TAX, SAMPLE,TREE)
+saveRDS(new_ps, "/kimlab_wd/rhdfyd/IBD_study/IBD_psy/cladogram/DESeq2/denoised_table_w_clinic_phyloseq_wo_tree_for_plot.rds")
+
+new_ps <- readRDS("/kimlab_wd/rhdfyd/IBD_study/IBD_psy/cladogram/DESeq2/denoised_table_w_clinic_phyloseq_wo_tree_for_plot.rds")
+taxa_metadata <- fread2("/kimlab_wd/rhdfyd/IBD_study/IBD_psy/cladogram/DESeq2/IBD_OR_genera_metadata_IBD_for_plot.txt")
+
+taxa_metadata <- taxa_metadata %>% mutate(G_SIG = case_when(OR_padj < 0.05 & ibd_padj < 0.05 ~ 3, 
+                                                            ibd_padj < 0.05 & OR_padj >= 0.05 ~ 1,
+                                                            ibd_padj >= 0.05 & OR_padj < 0.05 ~ 2,
+                                                            ibd_padj >= 0.05 & OR_padj >= 0.05 ~ 0))
+taxa_metadata$G_SIG <- as.factor(taxa_metadata$G_SIG)
+rownames(taxa_metadata) <- taxa_metadata$V1
+
+taxa_metadata[taxa_metadata$IBD_fc > 3, "IBD_fc"] = 3
+taxa_metadata[taxa_metadata$IBD_fc <= -3, "IBD_fc"] = -3
+taxa_metadata[taxa_metadata$OR_fc > 3, "OR_fc"] = 3
+taxa_metadata[taxa_metadata$OR_fc <= -3, "OR_fc"] = -3
+
+df1 <- taxa_metadata[,c("G_SIG")] %>% as.data.frame()
+rownames(df1) <- rownames(taxa_metadata)
+colnames(df1) <- "G_SIG"
+taxa_metadata[which(taxa_metadata$G_SIG == 0),c("IBD_fc","OR_fc")]  <- 0
+
+df_ph <- taxa_metadata[,c("Phylum")] %>% as.data.frame()
+rownames(df_ph) <- rownames(taxa_metadata)
+colnames(df_ph) <- "Phylum"
+
+lfc_genera_IBD <- taxa_metadata[,c("IBD_fc")] %>% as.data.frame()
+rownames(lfc_genera_IBD) <- rownames(taxa_metadata)
+colnames(lfc_genera_IBD) <- "G_IBD_fc"
+
+lfc_genera_OR <- taxa_metadata[,c("OR_fc")] %>% as.data.frame()
+rownames(lfc_genera_OR) <- rownames(taxa_metadata)
+colnames(lfc_genera_OR) <- "G_OR_fc"
+
+
+color_pa <- c("#ff4f6c","#370083","#0e967f","#988459","#c963e2","#5f0000",
+                  "#09008b","#7e4634","#db5ec6","#0077ff","#ff0000",
+                  "#ff5410","#62c5ff","#a6d400","#8c6cff","#756666",
+                  "#6d8b5e","#F900BF","#1a5a14","#00ff88")
+
+tree <- phy_tree(new_ps)
+base_tree <- ggtree(tree, layout="fan", open.angle=30)
+p <- base_tree %<+% taxa_metadata + geom_tiplab(aes(label=""),align = T,size = 8, offset = .5)
+p <- p + new_scale_fill()
+
+p2 <- p + geom_tiplab2(aes(color = Phylum,label=Genus),align = T,size = 3.5, offset = .53,linetype = "blank") +  scale_colour_manual(values=color_pa)
+p2 <- p2 + new_scale_fill()
+
+p3 <- gheatmap(p2, df1, width = .1,font.size = 2,colnames_offset_y = -1,color = "black",offset = .01) + 
+      scale_fill_manual(breaks=c("0", "1", "2", "3"), 
+        values=c("#ffffff",wes_palette("FantasticFox1")[3],wes_palette("FantasticFox1")[4],wes_palette("FantasticFox1")[5]), name="Disease-specific genera")
+p3 <- p3 + new_scale_fill()
+
+p4 <- gheatmap(p3, lfc_genera_IBD, width = .18,font.size = 3, offset=.09,colnames_offset_y = -1,color = "black") + 
+      scale_fill_gradient2(
+    low = "#000874", 
+    mid = "white", 
+    high = "#ff0000", 
+    midpoint = 0, limits = c(-3,3), name = "Microbial alteration in IBD or CMD patients\n(genus level)", breaks = c(-3,-1.5,0,1.5,3)
+    )
+p4 <- p4 + new_scale_fill()
+
+p5 <- gheatmap(p4, lfc_genera_OR, width = .18,font.size = 3, offset=.27,colnames_offset_y = -1,color = "black") + 
+      scale_fill_gradient2(
+    low = "#000874", 
+    mid = "white", 
+    high = "#ff0000", 
+    midpoint = 0, limits = c(-3,3), name = "Microbial alteration in IBD or CMD patients\n(genus level)", breaks = c(-3,-1.5,0,1.5,3)
+    )
+
+p6 <- p5 + theme_void()+theme(legend.position = "none")
+
+ggsave("/kimlab_wd/rhdfyd/IBD_study/IBD_psy/cladogram/DESeq2/Fan_cladogram_no_colnames_w_legend_v6.png",plot = p5, dpi=500, dev='png', units = c("in"), height = 30, width = 40)
+ggsave("/kimlab_wd/rhdfyd/IBD_study/IBD_psy/cladogram/DESeq2/Fan_cladogram_no_colnames_wo_legend_v6.png",plot = p6, dpi=500, dev='png', units = c("in"), height = 30, width = 40)
+
+base_tree <- ggtree(tree, layout="fan", open.angle=30)
+node_tree <- base_tree + geom_text(aes(label=node), hjust=-.3, size = 2) 
+pp <- node_tree %<+% taxa_metadata + geom_tiplab(aes(label=""),align = T,size = 1, offset = .4)
+pp1 <- gheatmap(pp, df_ph, width = .1,font.size = 1,colnames_offset_y = -1,color = "white") + scale_fill_manual(values = color_pa)
+
+node_tree_2 <- pp1 + geom_tiplab2(aes(label=Phylum),align = T,size = 2.5,linetype = "blank", color = "black",offset = .45)
+node_tree_2 <- node_tree_2+ new_scale_fill()
+
+ggsave("/kimlab_wd/rhdfyd/IBD_study/IBD_psy/cladogram/DESeq2/Fan_cladogram_node_phylum.png",plot = node_tree_2, dpi=500, dev='png', units = c('cm'), height = 50, width = 50)
+

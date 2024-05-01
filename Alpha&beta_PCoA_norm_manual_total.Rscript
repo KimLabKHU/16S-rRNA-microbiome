@@ -1,0 +1,349 @@
+#! /usr/bin/Rscript-4.1
+
+suppressMessages(suppressWarnings(library(vegan)))
+suppressMessages(suppressWarnings(library(dplyr)))
+suppressMessages(suppressWarnings(library(ggplot2)))
+suppressMessages(suppressWarnings(library(rJava)))
+suppressMessages(suppressWarnings(library(bigreadr)))
+suppressMessages(suppressWarnings(library('cowplot')))
+suppressMessages(suppressWarnings(library(gridExtra)))
+suppressMessages(suppressWarnings(library(ggfortify)))
+suppressMessages(suppressWarnings(library(stringr)))
+suppressMessages(suppressWarnings(library(grid)))
+suppressMessages(suppressWarnings(library("RNOmni")))
+
+suppressMessages(suppressWarnings(library(httpgd)))
+hgd()
+
+#######Alpha
+WORK="/kimlab_wd/rhdfyd/IBD_study/IBD_psy/all_phenotype"
+setwd(WORK)
+
+f_table <- fread2("/kimlab_wd/rhdfyd/IBD_study/IBD_psy/all_phenotype/IBD_case_control_582_shannon_info_DAS_revised_by_all_w_duration_v2.txt",header=T) %>% .[,c(1:9,11:17)]
+
+shannon <- fread2("/kimlab_wd/rhdfyd/Case_control_metagenomics/IBD_control/metagenome/Greengene/level-6/alpha_shannon/alpha-diversity.tsv",header=T,stringsAsFactors = F)
+simpson <- fread2("/kimlab_wd/rhdfyd/Case_control_metagenomics/IBD_control/metagenome/Greengene/level-6/alpha_simpson/alpha-diversity.tsv",header=T) 
+obs_features <- fread2("/kimlab_wd/rhdfyd/Case_control_metagenomics/IBD_control/metagenome/Greengene/level-6/alpha_obs_features/alpha-diversity.tsv",header=T) 
+faith_pd <- fread2("/kimlab_wd/rhdfyd/Case_control_metagenomics/IBD_control/metagenome/Greengene/level-6/alpha_faith_pd/alpha-diversity.tsv",header=T) 
+
+Total_alpha <- left_join(f_table,shannon,by=c("SampleID"="V1")) %>% left_join(.,simpson,by=c("SampleID"="V1")) %>% left_join(.,obs_features,by=c("SampleID"="V1")) %>% left_join(.,faith_pd,by=c("SampleID"="V1"))
+
+
+Total_alpha$Phenotype <- as.factor(Total_alpha$Phenotype)
+Total_alpha$status <- as.factor(Total_alpha$status)
+
+UC <- Total_alpha %>% filter(Disease_phenotype == 1 | Disease_phenotype == 0)
+CD <- Total_alpha %>% filter(Disease_phenotype == 2 | Disease_phenotype == 0)
+
+###
+##Shannon
+plot_alpha_box_all_phenotype <- function(alpha_data, DIS ,alpha_v) {
+
+alpha_num <- grep(paste0(alpha_v,"$"),colnames(alpha_data))
+# temp_1 <- alpha_data %>% filter(status == "IBD_MF")
+# temp_2 <- alpha_data %>% filter(status == "OR")
+temp_data <- alpha_data %>% filter(status == "IBD_MF" | status == "OR")
+temp_data$status <- as.factor(temp_data$status)
+
+IBD_control_t.test <- t.test(alpha_data[which(alpha_data$Phenotype == 0),alpha_num], alpha_data[which(alpha_data$Phenotype == 1),alpha_num])
+capture.output(IBD_control_t.test,file=paste0("alpha_all_phenotype_",DIS,"_",colnames(alpha_data)[alpha_num],"_",DIS,"VScontrol.t.test"))
+fwrite2(IBD_control_t.test$p.value %>% as.data.frame(),file=paste0("alpha_all_phenotype_",DIS,"_",colnames(alpha_data)[alpha_num],"_",DIS,"VScontrol.t.test_p.value"))
+
+MF <- alpha_data %>% filter(status == "Control" | status == "IBD_MF") 
+MF_control_t.test <- t.test(MF[which(MF$Phenotype == 0),alpha_num], MF[which(MF$Phenotype == 1),alpha_num])
+capture.output(MF_control_t.test,file=paste0("alpha_all_phenotype_",DIS,"_",colnames(alpha_data)[alpha_num],"_MFVScontrol.t.test"))
+fwrite2(MF_control_t.test$p.value %>% as.data.frame(),file=paste0("alpha_all_phenotype_",DIS,"_",colnames(alpha_data)[alpha_num],"_MFVScontrol.t.test_p.value"))
+
+OR <- alpha_data %>% filter(status == "Control" | status == "OR") 
+OR_control_t.test <- t.test(OR[which(OR$Phenotype == 0),alpha_num], OR[which(OR$Phenotype == 1),alpha_num])
+capture.output(OR_control_t.test,file=paste0("alpha_all_phenotype_",DIS,"_",colnames(alpha_data)[alpha_num],"_ORVScontrol.t.test"))
+fwrite2(OR_control_t.test$p.value %>% as.data.frame(),file=paste0("alpha_all_phenotype_",DIS,"_",colnames(alpha_data)[alpha_num],"_ORVScontrol.t.test_p.value"))
+
+OR_MF <- alpha_data %>% filter(status == "IBD_MF" | status == "OR") 
+OR_MF_control_t.test <- t.test(OR_MF[which(OR_MF$status == "IBD_MF"),alpha_num], OR_MF[which(OR_MF$status == "OR"),alpha_num])
+capture.output(OR_MF_control_t.test,file=paste0("alpha_all_phenotype_",DIS,"_",colnames(alpha_data)[alpha_num],"_MFVSOR.t.test"))
+fwrite2(OR_MF_control_t.test$p.value %>% as.data.frame(),file=paste0("alpha_all_phenotype_",DIS,"_",colnames(alpha_data)[alpha_num],"_MFVSOR.t.test_p.value"))
+
+p_1 <- ggplot(data = alpha_data, aes(x=as.factor(Phenotype), y= as.numeric(alpha_data[,alpha_num]),fill = as.factor(Phenotype))) +  stat_boxplot(geom='errorbar',width = 0.2) + geom_boxplot(lwd = 0.9) + 
+scale_x_discrete(limits=c("0", "1"), labels = c("control", "IBD")) + theme_classic(base_size = 24) + ylim(0, NA) + scale_fill_manual(values = c("#2004c0","#c02004")) 
+p_2 <- ggplot(data = temp_data, aes(x=as.factor(status), y= as.numeric(temp_data[,alpha_num]),fill = as.factor(status))) +  stat_boxplot(geom='errorbar',width = 0.2) + geom_boxplot(lwd = 0.9) + 
+scale_x_discrete(limits=c("IBD_MF", "OR"), labels = c("CMD-free", "CMD-affected")) + theme_classic(base_size = 24) + ylim(0, NA) + scale_fill_manual(values = c("#04a4c0","#a4c004"))
+# p_1 <- ggplot(data = alpha_data, aes(x=as.factor(Phenotype), y= as.numeric(alpha_data[,alpha_num]),fill = as.factor(Phenotype))) +  stat_boxplot(geom='errorbar',width = 0.2) + geom_boxplot(lwd = 0.9,outlier.shape = NA) + 
+
+final_plot <- plot_grid(p_1,p_2,align = "v")
+for_p1 <- p_1 + theme(legend.position = "none",axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_blank(),axis.text.y = element_blank(),title = element_blank(), axis.ticks = element_line(linewidth = 2),axis.ticks.length = unit(.4, "cm"))
+for_p2 <- p_2 + theme(legend.position = "none",axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_blank(),axis.text.y = element_blank(),title = element_blank(), axis.ticks = element_line(linewidth = 2),axis.ticks.length = unit(.4, "cm"))
+final_forplot <- plot_grid(for_p1,for_p2,align = "v")
+
+ggsave(paste0("alpha_all_phenotype_",DIS,"_",colnames(alpha_data)[alpha_num],"_v5.png"),plot = final_plot, dpi=300, dev='png',height=15, width=30,units='in')
+ggsave(paste0("alpha_all_phenotype_",DIS,"_",colnames(alpha_data)[alpha_num],"forplot_v5.png"),plot = final_forplot, dpi=300, dev='png',height=15, width=30,units='in')
+
+}
+
+plot_alpha_box_all_phenotype(Total_alpha,"IBD","shannon_entropy")
+plot_alpha_box_all_phenotype(Total_alpha,"IBD","simpson")
+plot_alpha_box_all_phenotype(Total_alpha,"IBD","observed_features")
+plot_alpha_box_all_phenotype(Total_alpha,"IBD","faith_pd")
+
+plot_alpha_box_all_phenotype(UC,"UC","shannon_entropy")
+plot_alpha_box_all_phenotype(UC,"UC","simpson")
+plot_alpha_box_all_phenotype(UC,"UC","observed_features")
+plot_alpha_box_all_phenotype(UC,"UC","faith_pd")
+
+plot_alpha_box_all_phenotype(CD,"CD","shannon_entropy")
+plot_alpha_box_all_phenotype(CD,"CD","simpson")
+plot_alpha_box_all_phenotype(CD,"CD","observed_features")
+plot_alpha_box_all_phenotype(CD,"CD","faith_pd")
+
+temp <- t.test(CD[which(CD$Phenotype == 0),"shannon_entropy"], CD[which(CD$Phenotype == 1),"shannon_entropy"])
+temp$p.value
+
+#######Beta
+Clinic <- "/kimlab_wd/rhdfyd/IBD_study/IBD_psy/all_phenotype/IBD_case_control_582_shannon_info_DAS_revised_by_all_w_duration_v3.txt"
+meta_all <- fread2(file=Clinic,header=T,stringsAsFactors = F)
+meta_all <- meta_all %>% mutate(Sig_mental = case_when(.$Sig_Ax == 1 | .$Sig_Dp == 1 ~ 1, .$Sig_Ax == 0 | .$Sig_Dp == 0 ~ 0, .$Phenotype == 0 ~ 2, .$status == "IBD_NA" ~ 3))
+
+#######
+#Bray
+output_path = "/kimlab_wd/rhdfyd/IBD_study/IBD_psy/all_phenotype/PCoA/bray"
+setwd(output_path)
+DF <- fread2("ControlvsIBD_mental_info_PCoA_group.result")
+PC_axis <- fread2("ControlvsIBD_mental_info_PC_axis_10.result",header=F)
+EigenV <- fread2("ControlvsIBD_mental_info_PCoA_eig.result",header=T)
+Data_matrix <- fread2("ControlvsIBD_mental.matrix",sep=",")
+rownames(Data_matrix) <- Data_matrix$V1
+Data_matrix <- Data_matrix[,-1] %>% as.matrix()
+########
+df_dat_eig <- data.frame(pc = 1:length(EigenV$x), EigenV$x/sum(EigenV$x)*100)
+colnames(PC_axis) = c("id",paste0("PC",1:10))
+
+pcoa <- PC_axis[,c(1:3)]
+final_table = left_join(pcoa,meta_all,by=c("id"="SampleID"))
+
+final_table$Sex <- final_table$Sex %>% as.factor()
+final_table$Alcohol <- final_table$Alcohol %>% as.factor()
+final_table$Smoking <- final_table$Smoking %>% as.factor()
+final_table$Sig_mental <- final_table$Sig_mental %>% as.factor()
+final_table$Phenotype <- final_table$Phenotype %>% as.factor()
+final_table$Sig_mental %>% table
+MF <- final_table %>% filter(Sig_mental == 0)
+MD <- final_table %>% filter(Sig_mental == 1)
+CT <- final_table %>% filter(Sig_mental == 2)
+
+plot_pcoa <- ggplot(final_table,aes(x=PC1, y=PC2,group = Sig_mental)) + theme_classic() +
+xlab(paste0("PC1 (",round(df_dat_eig[c(1,2),2][1],2),"%)")) +
+ylab(paste0("PC2 (",round(df_dat_eig[c(1,2),2][2],2),"%)")) +
+stat_ellipse(data = final_table, linetype = 2, aes(x = PC1, y= PC2, colour = Sig_mental), size =1, alpha = 0.7) + 
+geom_point(data = final_table, aes(x=PC1, y=PC2,color = Sig_mental),alpha = 0.7, size=4) + 
+scale_color_manual(values = c('#04960b','#c02004','#2004c0')) + 
+theme(legend.position = "none") +
+coord_cartesian(xlim = c(-0.40, 0.40), ylim = c(-0.40, 0.40)) + 
+ggtitle("Beta-diversity\nHealthy controls (n=75)\nvs IBD patients (n=225, 196 CMD-free IBD patients))")
+
+plot_pcoa <- plot_pcoa + geom_point(data = CT, aes(x=mean(PC1), y=mean(PC2)), size=4, alpha = 0.5, colour="black",pch=23,fill = "#2004c0", stroke = 2) + 
+geom_point(data = MF, aes(x=mean(PC1), y=mean(PC2)), size=4, alpha = 0.5, colour="black",pch=23, fill = "#04960b", stroke = 2) +
+geom_point(data = MD, aes(x=mean(PC1), y=mean(PC2)), size=4, alpha = 0.5, colour="black",pch=23,fill = "#c02004", stroke = 2)
+plot_pcoa
+ggsave("ControlvsIBD_mental_info_PCoA_v_revision.png",plot = plot_pcoa, dpi=300, dev='png', units="in",width = 12, height = 10)
+
+###Test
+##adonis
+# Phenotype + Sex + Age + BMI + Alcohol + Smoking
+table.adonis <- adonis(formula = dist ~ final_table$Sig_mental + final_table$Sex + final_table$Age + final_table$BMI + final_table$Alcohol + final_table$Smoking, permutations = 9999)
+capture.output(table.adonis,file = "ControlvsIBD_mental_info_adonis_v_rivision.result")
+
+# p1 <- ggplot() + geom_boxplot(data = final_table, aes(x=PC1, y=as.factor(Sig_mental), fill = Sig_mental)) + 
+p1 <- ggplot() + geom_boxplot(data = final_table, aes(x=PC1, y=as.factor(Sig_mental)),fill = c("#2004c0","#04960b","#c02004")) + 
+theme_classic() + theme(legend.position = "none") +
+coord_cartesian(xlim = c(-0.40, 0.40)) +xlab(paste0("PC1 (",round(df_dat_eig[c(1,2),2][1],2),"%)")) +ylab("Phenotype") +
+scale_y_discrete(limits=c("2","0","1"), labels = c("Healthy\ncontrols", "CMD-free\nIBD patients", "CMD-affected\nIBD patients"))
+
+# p2 <- ggplot() + geom_boxplot(data = final_table, aes(x=as.factor(Sig_mental), y=PC2, fill = Sig_mental)) + 
+p2 <- ggplot() + geom_boxplot(data = final_table, aes(x=as.factor(Sig_mental), y=PC2),fill = c("#2004c0","#04960b","#c02004")) + 
+theme_classic() + theme(legend.position = "none") +
+coord_cartesian(ylim = c(-0.40, 0.40)) +ylab(paste0("PC2 (",round(df_dat_eig[c(1,2),2][2],2),"%)")) +xlab("Phenotype") +
+scale_x_discrete(limits=c("2","0","1"), labels = c("Healthy\ncontrols", "CMD-free\nIBD patients", "CMD-affected\nIBD patients"))
+
+final_plot <- plot_grid(plot_pcoa,p2,p1,NULL,align = "hv",rel_widths = c(1.8,1),rel_heights = c(1.8,1))
+ggsave("ControlvsIBD_mental_info_w_boxplot_v_rivision.png",plot = final_plot, dpi=300, dev='png', units="in",width = 20, height = 15)
+
+for_plot <- plot_pcoa + theme(legend.position = "none",axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_blank(),axis.text.y = element_blank(),title = element_blank(), axis.ticks = element_line(linewidth = 1),axis.ticks.length = unit(.3, "cm"))
+forplot_p1 <- p1 + theme(legend.position = "none",axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_blank(),axis.text.y = element_blank(),title = element_blank(), axis.ticks = element_line(linewidth = 1),axis.ticks.length = unit(.3, "cm"))
+forplot_p2 <- p2 + theme(legend.position = "none",axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_blank(),axis.text.y = element_blank(),title = element_blank(), axis.ticks = element_line(linewidth = 1),axis.ticks.length = unit(.3, "cm"))
+
+final_for_plot <- plot_grid(for_plot,forplot_p2,forplot_p1,NULL,align = "hv",rel_widths = c(2,1),rel_heights = c(2,1))
+ggsave("ControlvsIBD_mental_info_w_boxplot_for_plot_v_rivision.png",plot = final_for_plot, dpi=300, dev='png', units="in",width = 20, height = 15)
+
+#######
+# JonckheereTerpstraTest
+library(DescTools)
+DF$status_f = as.factor(DF$status)
+temp <- DF[,c(6:ncol(DF))]
+temp_C <- DF %>% filter(status != "Control") %>% .[,c(6:ncol(.))]
+
+bin_df_CT_CMDF_CMDA = c()
+bin_df_CMDF_CMDA = c()
+
+for (i in 1:10){
+JT_result = JonckheereTerpstraTest(temp[,i] ~ status_f, data = temp, alternative = "increasing", exact = TRUE)$p.value %>% as.numeric()
+bin_df_CT_CMDF_CMDA = c(bin_df_CT_CMDF_CMDA, JT_result)
+
+JT_result_CMD = JonckheereTerpstraTest(temp_C[,i] ~ status_f, data = temp_C, alternative = "increasing", exact = TRUE)$p.value %>% as.numeric()
+bin_df_CMDF_CMDA = c(bin_df_CMDF_CMDA, JT_result_CMD)
+}
+
+bin_df_CT_CMDF_CMDA <- bin_df_CT_CMDF_CMDA %>% as.data.frame()
+bin_df_CT_CMDF_CMDA$ID <- paste0("PC",rownames(bin_df_CT_CMDF_CMDA))
+colnames(bin_df_CT_CMDF_CMDA)[1] <- "CT_CMDF_CMDA_p-value"
+bin_df_CMDF_CMDA <- bin_df_CMDF_CMDA %>% as.data.frame()
+bin_df_CMDF_CMDA$ID <- paste0("PC",rownames(bin_df_CMDF_CMDA))
+colnames(bin_df_CMDF_CMDA)[1] <- "CMDF_CMDA_p-value"
+bintemp <- left_join(bin_df_CT_CMDF_CMDA,bin_df_CMDF_CMDA) %>% .[,c(2,1,3)]
+fwrite2(bintemp,file = "/kimlab_wd/rhdfyd/IBD_study/IBD_psy/all_phenotype/PCoA/bray/JT_result_IBD_v_rivision.txt",sep="\t")
+
+## UC
+final_table %>% head
+UC_table <- final_table %>% filter(Phenotype == 1 | Phenotype == 0)
+temp_mat <- Data_matrix[UC_table$id,UC_table$id]
+UC_dist <- as.dist(temp_mat)
+
+UC_DF <- DF %>% filter(id %in% UC_table$id)
+
+UC_DF$status_f = as.factor(UC_DF$status)
+temp <- UC_DF[,c(6:ncol(UC_DF))]
+temp_C <- UC_DF %>% filter(status != "Control") %>% .[,c(6:ncol(.))]
+
+bin_df_CT_CMDF_CMDA = c()
+bin_df_CMDF_CMDA = c()
+
+for (i in 1:10){
+JT_result = JonckheereTerpstraTest(temp[,i] ~ status_f, data = temp, alternative = "increasing", exact = TRUE)$p.value %>% as.numeric()
+bin_df_CT_CMDF_CMDA = c(bin_df_CT_CMDF_CMDA, JT_result)
+
+JT_result_CMD = JonckheereTerpstraTest(temp_C[,i] ~ status_f, data = temp_C, alternative = "increasing", exact = TRUE)$p.value %>% as.numeric()
+bin_df_CMDF_CMDA = c(bin_df_CMDF_CMDA, JT_result_CMD)
+}
+
+bin_df_CT_CMDF_CMDA <- bin_df_CT_CMDF_CMDA %>% as.data.frame()
+bin_df_CT_CMDF_CMDA$ID <- paste0("PC",rownames(bin_df_CT_CMDF_CMDA))
+colnames(bin_df_CT_CMDF_CMDA)[1] <- "CT_CMDF_CMDA_p-value"
+bin_df_CMDF_CMDA <- bin_df_CMDF_CMDA %>% as.data.frame()
+bin_df_CMDF_CMDA$ID <- paste0("PC",rownames(bin_df_CMDF_CMDA))
+colnames(bin_df_CMDF_CMDA)[1] <- "CMDF_CMDA_p-value"
+bintemp <- left_join(bin_df_CT_CMDF_CMDA,bin_df_CMDF_CMDA) %>% .[,c(2,1,3)]
+fwrite2(bintemp,file = "/kimlab_wd/rhdfyd/IBD_study/IBD_psy/all_phenotype/PCoA/bray/JT_result_UC_revision.txt",sep="\t")
+
+# df_dat_eig <- data.frame(pc = 1:length(dat_pcoa$eig), dat_pcoa$eig/sum(dat_pcoa$eig)*100)
+MF <- UC_table %>% filter(Sig_mental == 0)
+MD <- UC_table %>% filter(Sig_mental == 1)
+CT <- UC_table %>% filter(Sig_mental == 2)
+
+plot_pcoa <- ggplot(UC_table,aes(x=PC1, y=PC2,group = Sig_mental)) + theme_classic() +
+stat_ellipse(data = UC_table, linetype = 2, aes(x = PC1, y= PC2, colour = Sig_mental), size =1, alpha = 0.7) + 
+geom_point(data = UC_table, aes(x=PC1, y=PC2,color = Sig_mental),alpha = 0.7, size=4) + 
+scale_color_manual(values = c('#04960b','#c02004','#2004c0')) + theme(legend.position = "none") +
+coord_cartesian(xlim = c(-0.40, 0.40), ylim = c(-0.40, 0.40)) + 
+ggtitle("Beta-diversity\nControl (n=75) vs UC patients (n=95, 82 CMD-free UC patients))")
+
+plot_pcoa <- plot_pcoa + geom_point(data = CT, aes(x=mean(PC1), y=mean(PC2)), size=4, alpha = 0.5, colour="black",pch=23,fill = "#2004c0", stroke = 2) + 
+geom_point(data = MF, aes(x=mean(PC1), y=mean(PC2)), size=4, alpha = 0.5, colour="black",pch=23, fill = "#04960b", stroke = 2) +
+geom_point(data = MD, aes(x=mean(PC1), y=mean(PC2)), size=4, alpha = 0.5,pch=23,fill = "#c02004", stroke = 2)
+
+
+ggsave("ControlvsUC_mental_info_PCoA_v_rivision.png",plot = plot_pcoa, dpi=300, dev='png', units="in",width = 12, height = 10)
+
+p1 <- ggplot() + geom_boxplot(data = UC_table, aes(x=PC1, y=as.factor(Sig_mental)),fill = c("#2004c0","#04960b","#c02004")) + 
+theme_classic() + theme(legend.position = "none") +
+coord_cartesian(xlim = c(-0.40, 0.40)) +xlab("PC1") +ylab("Phenotype") +
+scale_y_discrete(limits=c("2","0","1"), labels = c("Healthy\ncontrols", "CMD-free\nUC patients", "CMD-affected\nUC patients"))
+
+p2 <- ggplot() + geom_boxplot(data = UC_table, aes(x=as.factor(Sig_mental), y=PC2),fill = c("#2004c0","#04960b","#c02004")) + 
+theme_classic() + theme(legend.position = "none") +
+coord_cartesian(ylim = c(-0.40, 0.40)) +ylab("PC2") +xlab("Phenotype") +
+scale_x_discrete(limits=c("2","0","1"), labels = c("Healthy\ncontrols", "CMD-free\nUC patients", "CMD-affected\nUC patients"))
+
+final_plot <- plot_grid(plot_pcoa,p2,p1,NULL,align = "hv",rel_widths = c(1.8,1),rel_heights = c(1.8,1))
+ggsave("ControlvsUC_mental_info_w_boxplot_v_rivision.png",plot = final_plot, dpi=300, dev='png', units="in",width = 20, height = 15)
+
+for_plot <- plot_pcoa + theme(legend.position = "none",axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_blank(),axis.text.y = element_blank(),title = element_blank(),axis.ticks = element_line(linewidth = 1),axis.ticks.length = unit(.3, "cm"))
+forplot_p1 <- p1 + theme(legend.position = "none",axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_blank(),axis.text.y = element_blank(),title = element_blank(), axis.ticks = element_line(linewidth = 1),axis.ticks.length = unit(.3, "cm"))
+forplot_p2 <- p2 + theme(legend.position = "none",axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_blank(),axis.text.y = element_blank(),title = element_blank(), axis.ticks = element_line(linewidth = 1),axis.ticks.length = unit(.3, "cm"))
+
+final_for_plot <- plot_grid(for_plot,forplot_p2,forplot_p1,NULL,align = "hv",rel_widths = c(2,1),rel_heights = c(2,1))
+ggsave("ControlvsUC_mental_info_w_boxplot_for_plot_v_rivision.png",plot = final_for_plot, dpi=300, dev='png', units="in",width = 20, height = 15)
+
+table.adonis <- adonis(formula = UC_dist ~ UC_table$Sig_mental + UC_table$Sex + UC_table$Age + UC_table$BMI + UC_table$Alcohol + UC_table$Smoking, permutations = 9999)
+capture.output(table.adonis,file = "ControlvsUC_mental_info_adonis_v_rivision.result")
+
+## CD
+CD_table <- final_table %>% filter(Phenotype == 2 | Phenotype == 0)
+temp_mat <- Data_matrix[CD_table$id,CD_table$id]
+CD_dist <- as.dist(temp_mat)
+
+CD_DF <- DF %>% filter(id %in% CD_table$id)
+
+CD_DF$status_f = as.factor(CD_DF$status)
+temp <- CD_DF[,c(6:ncol(CD_DF))]
+temp_C <- CD_DF %>% filter(status != "Control") %>% .[,c(6:ncol(.))]
+
+bin_df_CT_CMDF_CMDA = c()
+bin_df_CMDF_CMDA = c()
+
+for (i in 1:10){
+JT_result = JonckheereTerpstraTest(temp[,i] ~ status_f, data = temp, alternative = "increasing", exact = TRUE)$p.value %>% as.numeric()
+bin_df_CT_CMDF_CMDA = c(bin_df_CT_CMDF_CMDA, JT_result)
+
+JT_result_CMD = JonckheereTerpstraTest(temp_C[,i] ~ status_f, data = temp_C, alternative = "increasing", exact = TRUE)$p.value %>% as.numeric()
+bin_df_CMDF_CMDA = c(bin_df_CMDF_CMDA, JT_result_CMD)
+}
+
+bin_df_CT_CMDF_CMDA <- bin_df_CT_CMDF_CMDA %>% as.data.frame()
+bin_df_CT_CMDF_CMDA$ID <- paste0("PC",rownames(bin_df_CT_CMDF_CMDA))
+colnames(bin_df_CT_CMDF_CMDA)[1] <- "CT_CMDF_CMDA_p-value"
+bin_df_CMDF_CMDA <- bin_df_CMDF_CMDA %>% as.data.frame()
+bin_df_CMDF_CMDA$ID <- paste0("PC",rownames(bin_df_CMDF_CMDA))
+colnames(bin_df_CMDF_CMDA)[1] <- "CMDF_CMDA_p-value"
+bintemp <- left_join(bin_df_CT_CMDF_CMDA,bin_df_CMDF_CMDA) %>% .[,c(2,1,3)]
+fwrite2(bintemp,file = "/kimlab_wd/rhdfyd/IBD_study/IBD_psy/all_phenotype/PCoA/bray/JT_result_CD_v_rivision.txt",sep="\t")
+
+MF <- CD_table %>% filter(Sig_mental == 0)
+MD <- CD_table %>% filter(Sig_mental == 1)
+CT <- CD_table %>% filter(Sig_mental == 2)
+
+plot_pcoa <- ggplot(CD_table,aes(x=PC1, y=PC2,group = Sig_mental)) + theme_classic() +
+stat_ellipse(data = CD_table, linetype = 2, aes(x = PC1, y= PC2, colour = Sig_mental), size =1, alpha = 0.7) + 
+geom_point(data = CD_table, aes(x=PC1, y=PC2,color = Sig_mental),alpha = 0.7, size=4) + 
+scale_color_manual(values = c('#04960b','#c02004','#2004c0')) + theme(legend.position = "none") +
+coord_cartesian(xlim = c(-0.40, 0.40), ylim = c(-0.40, 0.40)) + 
+ggtitle("Beta-diversity\nControl (n=75) vs CD patients (n=130, 114 CMD-free CD patients))")
+
+plot_pcoa <- plot_pcoa + geom_point(data = CT, aes(x=mean(PC1), y=mean(PC2)), size=4, alpha = 0.5, colour="black",pch=23,fill = "#2004c0", stroke = 2) + 
+geom_point(data = MF, aes(x=mean(PC1), y=mean(PC2)), size=4, alpha = 0.5, colour="black",pch=23, fill = "#04960b", stroke = 2) +
+geom_point(data = MD, aes(x=mean(PC1), y=mean(PC2)), size=4, alpha = 0.5, colour="black",pch=23,fill = "#c02004", stroke = 2)
+
+ggsave("ControlvsCD_mental_info_PCoA_v_rivision.png",plot = plot_pcoa, dpi=300, dev='png', units="in",width = 12, height = 10)
+
+p1 <- ggplot() + geom_boxplot(data = CD_table, aes(x=PC1, y=as.factor(Sig_mental)),fill = c("#2004c0","#04960b","#c02004")) + 
+theme_classic() + theme(legend.position = "none") +
+coord_cartesian(xlim = c(-0.40, 0.40)) +xlab("PC1") +ylab("Phenotype") +
+scale_y_discrete(limits=c("2","0","1"), labels = c("Healthy\ncontrols", "CMD-free\nCD patients", "CMD-affected\nCD patients"))
+
+p2 <- ggplot() + geom_boxplot(data = CD_table, aes(x=as.factor(Sig_mental), y=PC2),fill = c("#2004c0","#04960b","#c02004")) + 
+theme_classic() + theme(legend.position = "none") +
+coord_cartesian(ylim = c(-0.40, 0.40)) +ylab("PC2") +xlab("Phenotype") +
+scale_x_discrete(limits=c("2","0","1"), labels = c("Healthy\ncontrols", "CMD-free\nCD patients", "CMD-affected\nCD patients"))
+
+final_plot <- plot_grid(plot_pcoa,p2,p1,NULL,align = "hv",rel_widths = c(1.8,1),rel_heights = c(1.8,1))
+ggsave("ControlvsCD_mental_info_w_boxplot_v_rivision.png",plot = final_plot, dpi=300, dev='png', units="in",width = 20, height = 15)
+
+for_plot <- plot_pcoa + theme(legend.position = "none",axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_blank(),axis.text.y = element_blank(),title = element_blank(),axis.ticks = element_line(linewidth = 1),axis.ticks.length = unit(.3, "cm"))
+forplot_p1 <- p1 + theme(legend.position = "none",axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_blank(),axis.text.y = element_blank(),title = element_blank(),axis.ticks = element_line(linewidth = 1),axis.ticks.length = unit(.3, "cm"))
+forplot_p2 <- p2 + theme(legend.position = "none",axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_blank(),axis.text.y = element_blank(),title = element_blank(),axis.ticks = element_line(linewidth = 1),axis.ticks.length = unit(.3, "cm"))
+
+final_for_plot <- plot_grid(for_plot,forplot_p2,forplot_p1,NULL,align = "hv",rel_widths = c(2,1),rel_heights = c(2,1))
+ggsave("ControlvsCD_mental_info_w_boxplot_for_plot_v_rivision.png",plot = final_for_plot, dpi=300, dev='png', units="in",width = 20, height = 15)
+
+table.adonis <- adonis(formula = CD_dist ~ CD_table$Sig_mental + CD_table$Sex + CD_table$Age + CD_table$BMI + CD_table$Alcohol + CD_table$Smoking, permutations = 9999)
+capture.output(table.adonis,file = "ControlvsCD_mental_info_adonis.result")
+# ================================================================================================================================================================
+
