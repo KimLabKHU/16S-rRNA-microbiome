@@ -1,0 +1,217 @@
+#! /usr/bin/Rscript-4.1
+
+library(dplyr)
+library(bigreadr)
+library(tidytree)
+library(ggplot2)
+library(vegan)
+library(colorspace)
+library(wesanderson)
+library(cowplot)
+library(phyloseq)
+library("tidyverse")
+
+setwd("WORKING_DIR")
+
+#### Abundance bar plot
+ps <- readRDS("denoised_table_w_clinic_phyloseq_wo_tree_v2.rds")
+# Clinic data
+metadata <- read.table(file = "IBD_case_control_582_shannon_info_DAS_revised_by_all_w_duration_v3.txt", sep = "\t", header = T, row.names = 1)
+ps.rel = transform_sample_counts(ps, function(x) x/sum(x)*100)
+glom <- tax_glom(ps.rel, taxrank = 'Family', NArm = FALSE)
+
+ps.melt <- psmelt(glom)
+ps.melt$Family <- as.character(ps.melt$Family)
+ps.melt <- left_join(ps.melt[,c(1:3,24)], metadata[,c("id","status","Phenotype")], by=c("Sample"="id"))
+
+
+ps.melt <- ps.melt %>%
+  group_by(Phenotype, Family) %>%
+  mutate(median=median(Abundance))
+
+#### group median > 1 ####
+# select the rare taxa in each group (UC/CD/control), with median of relative abundance < 1%.
+keep <- unique(ps.melt$Family[ps.melt$median > 1])
+ps.melt$Family[!(ps.melt$Family %in% keep)] <- "<1%"
+
+ps.melt_sum <- ps.melt %>%
+  group_by(Sample,Phenotype,Family,status) %>%
+  summarise(Abundance=sum(Abundance))
+
+ps.melt_sum$Family %>% unique(.)
+### Color
+cols = c("k__Bacteria;p__Bacteroidetes;c__Bacteroidia;o__Bacteroidales;f__Bacteroidaceae" = "#B41489", 
+"k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Ruminococcaceae" = "#F79235",
+"k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Lachnospiraceae" = "#5F4B8B",
+"k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Veillonellaceae" = "#65BAA9", 
+"k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;Unclassified_o__Clostridiales[2]" = "#d74141", 
+"k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;Unclassified_o__Clostridiales" = "#007CE8", 
+"k__Bacteria;p__Proteobacteria;c__Betaproteobacteria;o__Burkholderiales;f__Comamonadaceae" = "#0089A5", 
+"k__Bacteria;p__Bacteroidetes;c__Bacteroidia;o__Bacteroidales;f__Rikenellaceae" = "#E69A8D", 
+"k__Bacteria;p__Proteobacteria;c__Gammaproteobacteria;o__Enterobacteriales;f__Enterobacteriaceae" = "#2C5F2D", 
+"<1%" = "grey")
+status_cols = c("Control" = "#00539C", 
+"IBD_NA" = "#6A7BA2",
+"IBD_MF" = "#EEA47F",
+"OR" = "#D64161")
+
+ps.melt_sum$col = cols[ps.melt_sum$Family]
+ps.melt_sum$status <- factor(ps.melt_sum$status, levels = c("Control","IBD_NA","IBD_MF","OR")) 
+ps.melt_sum$status_cols = cols[ps.melt_sum$status]
+
+taxon_of_interest <- "k__Bacteria;p__Bacteroidetes;c__Bacteroidia;o__Bacteroidales;f__Bacteroidaceae"
+
+## status plot
+status_legend <- ggplot(ps.melt_sum, aes(x = Sample, y = Abundance, fill = status)) + 
+  geom_bar(stat = "identity",width = 1) + 
+  labs(x = "", y = "%") +
+  theme_classic(base_size = 20) + 
+  theme(axis.ticks.x=element_blank(), axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_fill_manual(name = "Family", values = status_cols) 
+
+ggsave("status_legend.png",plot = status_legend, dpi=300, dev='png', units="in",width = 49, height = 15)
+
+ps.melt_sum$f_order <- factor(ps.melt_sum$Family, levels = c("k__Bacteria;p__Bacteroidetes;c__Bacteroidia;o__Bacteroidales;f__Bacteroidaceae",
+                                                     "k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Ruminococcaceae",
+                                                     "k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Lachnospiraceae",
+                                                     "k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;f__Veillonellaceae",
+                                                     "k__Bacteria;p__Proteobacteria;c__Betaproteobacteria;o__Burkholderiales;f__Comamonadaceae",
+                                                     "k__Bacteria;p__Proteobacteria;c__Gammaproteobacteria;o__Enterobacteriales;f__Enterobacteriaceae",
+                                                     "k__Bacteria;p__Bacteroidetes;c__Bacteroidia;o__Bacteroidales;f__Rikenellaceae",
+                                                     "k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;Unclassified_o__Clostridiales",
+                                                     "k__Bacteria;p__Firmicutes;c__Clostridia;o__Clostridiales;Unclassified_o__Clostridiales[2]",
+                                                     "<1%"))
+
+
+### Control
+Control <- ps.melt_sum %>% 
+  filter(Phenotype == 0) %>%
+  group_by(Sample) %>%
+  mutate(taxon_abundance = sum(ifelse(Family == taxon_of_interest, Abundance, 0))) %>%
+  arrange(desc(taxon_abundance))
+
+Control_f <- ggplot(Control, aes(x = fct_reorder(Sample, -taxon_abundance), y = -Abundance, fill = f_order)) + 
+  geom_bar(stat = "identity",width = 1) + 
+  labs(x = "", y = "%") +
+  theme(axis.ticks.x=element_blank(), axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_fill_manual(name = "Family", values = cols) +
+  theme_void(base_size = 24) + theme(legend.position = "none",axis.ticks.x=element_blank(),axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_blank(),axis.text.y = element_blank(),strip.background = element_blank(), strip.text = element_blank())
+
+ggsave("Control.png",plot = Control_f, dpi=300, dev='png', units="in",width = 49, height = 15)
+
+### UC
+UC_NA <- ps.melt_sum %>% 
+  filter(Phenotype == 1 & status == "IBD_NA") %>%
+  group_by(Sample) %>%
+  mutate(taxon_abundance = sum(ifelse(Family == taxon_of_interest, Abundance, 0))) %>%
+  arrange(desc(taxon_abundance))
+
+UC_MF <- ps.melt_sum %>% 
+  filter(Phenotype == 1 & status == "IBD_MF") %>%
+  group_by(Sample) %>%
+  mutate(taxon_abundance = sum(ifelse(Family == taxon_of_interest, Abundance, 0))) %>%
+  arrange(desc(taxon_abundance))
+
+UC_OR <- ps.melt_sum %>% 
+  filter(Phenotype == 1 & status == "OR") %>%
+  group_by(Sample) %>%
+  mutate(taxon_abundance = sum(ifelse(Family == taxon_of_interest, Abundance, 0))) %>%
+  arrange(desc(taxon_abundance))
+
+UC_legend <- ggplot(UC_NA, aes(x = fct_reorder(Sample, -taxon_abundance), y = -Abundance, fill = f_order)) + 
+  geom_bar(stat = "identity",width = 1) + 
+  labs(x = "", y = "%") +
+  theme_classic(base_size = 10) + 
+  theme(axis.ticks.x=element_blank(), axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_fill_manual(name = "Family", values = cols) 
+
+ggsave("UC_legend.png",plot = UC_legend, dpi=300, dev='png', units="in",width = 49, height = 15)
+
+UC_NA_f <- ggplot(UC_NA, aes(x = fct_reorder(Sample, -taxon_abundance), y = -Abundance, fill = f_order)) + 
+  geom_bar(stat = "identity",width = 1) + 
+  labs(x = "", y = "%") +
+  theme(axis.ticks.x=element_blank(), axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_fill_manual(name = "Family", values = cols) +
+  theme_void(base_size = 24) + theme(legend.position = "none",axis.ticks.x=element_blank(),axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_blank(),axis.text.y = element_blank(),strip.background = element_blank(), strip.text = element_blank())
+
+ggsave("UC_NA.png",plot = UC_NA_f, dpi=300, dev='png', units="in",width = 49, height = 15)
+
+UC_MF_f <- ggplot(UC_MF, aes(x = fct_reorder(Sample, -taxon_abundance), y = -Abundance, fill = f_order)) + 
+  geom_bar(stat = "identity",width = 1) + 
+  labs(x = "", y = "%") +
+  theme(axis.ticks.x=element_blank(), axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_fill_manual(name = "Family", values = cols) +
+  theme_void(base_size = 24) + theme(legend.position = "none",axis.ticks.x=element_blank(),axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_blank(),axis.text.y = element_blank(),strip.background = element_blank(), strip.text = element_blank())
+
+ggsave("UC_CMD_free.png",plot = UC_MF_f, dpi=300, dev='png', units="in",width = 49, height = 15)
+
+UC_OR_f <- ggplot(UC_OR, aes(x = fct_reorder(Sample, -taxon_abundance), y = -Abundance, fill = f_order)) + 
+  geom_bar(stat = "identity",width = 1) + 
+  labs(x = "", y = "%") +
+  theme(axis.ticks.x=element_blank(), axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_fill_manual(name = "Family", values = cols) +
+  theme_void(base_size = 24) + theme(legend.position = "none",axis.ticks.x=element_blank(),axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_blank(),axis.text.y = element_blank(),strip.background = element_blank(), strip.text = element_blank())
+
+ggsave("UC_CMD_af.png",plot = UC_OR_f, dpi=300, dev='png', units="in",width = 49, height = 15)
+
+UC_merged <- plot_grid(UC_NA_f,UC_MF_f,UC_OR_f,align = "hv",ncol=3)
+ggsave("UC_merged.png",plot = UC_merged, dpi=300, dev='png', units="in",width = 49, height = 15)
+
+### CD
+CD_NA <- ps.melt_sum %>% 
+  filter(Phenotype == 2 & status == "IBD_NA") %>%
+  group_by(Sample) %>%
+  mutate(taxon_abundance = sum(ifelse(Family == taxon_of_interest, Abundance, 0))) %>%
+  arrange(desc(taxon_abundance))
+
+CD_MF <- ps.melt_sum %>% 
+  filter(Phenotype == 2 & status == "IBD_MF") %>%
+  group_by(Sample) %>%
+  mutate(taxon_abundance = sum(ifelse(Family == taxon_of_interest, Abundance, 0))) %>%
+  arrange(desc(taxon_abundance))
+
+CD_OR <- ps.melt_sum %>% 
+  filter(Phenotype == 2 & status == "OR") %>%
+  group_by(Sample) %>%
+  mutate(taxon_abundance = sum(ifelse(Family == taxon_of_interest, Abundance, 0))) %>%
+  arrange(desc(taxon_abundance))
+
+CD_legend <- ggplot(CD_NA, aes(x = fct_reorder(Sample, -taxon_abundance), y = -Abundance, fill = f_order)) + 
+  geom_bar(stat = "identity",width = 1) + 
+  labs(x = "", y = "%") +
+  theme_classic(base_size = 10) + 
+  theme(axis.ticks.x=element_blank(), axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_fill_manual(name = "Family", values = cols) 
+
+ggsave("CD_legend.png",plot = CD_legend, dpi=300, dev='png', units="in",width = 49, height = 15)
+
+CD_NA_f <- ggplot(CD_NA, aes(x = fct_reorder(Sample, -taxon_abundance), y = -Abundance, fill = f_order)) + 
+  geom_bar(stat = "identity",width = 1) + 
+  labs(x = "", y = "%") +
+  theme(axis.ticks.x=element_blank(), axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_fill_manual(name = "Family", values = cols) +
+  theme_void(base_size = 24) + theme(legend.position = "none",axis.ticks.x=element_blank(),axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_blank(),axis.text.y = element_blank(),strip.background = element_blank(), strip.text = element_blank())
+
+ggsave("CD_NA.png",plot = CD_NA_f, dpi=300, dev='png', units="in",width = 49, height = 15)
+
+CD_MF_f <- ggplot(CD_MF, aes(x = fct_reorder(Sample, -taxon_abundance), y = -Abundance, fill = f_order)) + 
+  geom_bar(stat = "identity",width = 1) + 
+  labs(x = "", y = "%") +
+  theme(axis.ticks.x=element_blank(), axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_fill_manual(name = "Family", values = cols) +
+  theme_void(base_size = 24) + theme(legend.position = "none",axis.ticks.x=element_blank(),axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_blank(),axis.text.y = element_blank(),strip.background = element_blank(), strip.text = element_blank())
+
+ggsave("CD_CMD_free.png",plot = CD_MF_f, dpi=300, dev='png', units="in",width = 49, height = 15)
+
+CD_OR_f <- ggplot(CD_OR, aes(x = fct_reorder(Sample, -taxon_abundance), y = -Abundance, fill = f_order)) + 
+  geom_bar(stat = "identity",width = 1) + 
+  labs(x = "", y = "%") +
+  theme(axis.ticks.x=element_blank(), axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_fill_manual(name = "Family", values = cols) +
+  theme_void(base_size = 24) + theme(legend.position = "none",axis.ticks.x=element_blank(),axis.title.x=element_blank(),axis.title.y=element_blank(),axis.text.x = element_blank(),axis.text.y = element_blank(),strip.background = element_blank(), strip.text = element_blank())
+
+ggsave("CD_CMD_af.png",plot = CD_OR_f, dpi=300, dev='png', units="in",width = 49, height = 15)
+
+CD_merged <- plot_grid(CD_NA_f,CD_MF_f,CD_OR_f,align = "hv",ncol=3)
+ggsave("CD_merged.png",plot = CD_merged, dpi=300, dev='png', units="in",width = 49, height = 15)
+

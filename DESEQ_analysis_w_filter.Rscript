@@ -1,0 +1,190 @@
+#! /usr/bin/Rscript
+args = commandArgs(TRUE)
+
+suppressMessages(suppressWarnings(library(DESeq2)))
+suppressMessages(suppressWarnings(library(dplyr)))
+suppressMessages(suppressWarnings(library(bigreadr)))
+
+ ##Input arguments
+meta_DIR <- args[1]
+metafile <- args[2] #only file name
+outdir <- args[3]
+comparing_mode <- args[4]
+Pheno_name <- args[5] #IBD or OR or MF
+clinic_file <- args[6]
+
+ ##Input files
+
+level <- strsplit(metafile,"-")[[1]][2]
+print(paste0("level: ",level))
+print(paste0("Option: ",Pheno_name))
+meta_DIR_metadata <- paste(meta_DIR, metafile, sep="/")
+metadata = fread2(meta_DIR_metadata,header=T,sep = "\t",stringsAsFactors = F)
+clinic_data  = fread2(clinic_file,header=T,stringsAsFactors = F)
+colnames(metadata)[1] <- "SampleID"
+metadata <- metadata %>% filter( SampleID %in% clinic_data$SampleID)
+su <- grep("k__", colnames(metadata))[length(grep("k__", colnames(metadata)))]
+metadata <- metadata[,c(1:su)]
+metadata <- left_join(metadata,clinic_data,by=c("SampleID"))
+metadata[which(metadata$Phenotype == 0),"Sig_Ax"] <- 2
+metadata[which(metadata$Phenotype == 0),"Sig_Dp"] <- 2
+
+DESeq_nor <- function(data,level,m_name,OUT_DIR,mode){
+
+su <- grep("k__", colnames(data))[length(grep("k__", colnames(data)))]
+DESeq_count <- data[,2:su]
+row.names(DESeq_count) <- data[,1]
+DESeq_count <- t(DESeq_count)
+sample_meta <- data[,(su+1):ncol(data)]
+row.names(sample_meta) <- data[,1]
+sample_meta$Sex <- as.factor(sample_meta$Sex)
+sample_meta$Alcohol <- as.factor(sample_meta$Alcohol)
+sample_meta$Smoking <- as.factor(sample_meta$Smoking)
+sample_meta$total_score <- as.factor(sample_meta$total_score)
+
+##DESeq
+DESeq_count <- DESeq_count+1
+
+if (mode == "vsControl") {
+  dds <- DESeqDataSetFromMatrix(countData = DESeq_count, colData = sample_meta,
+                              design = ~ Sex + Age + BMI + Alcohol + Smoking + total_score)
+} else if (mode == "vsMF") {
+  sample_meta$DAS <- as.numeric(sample_meta$DAS)
+  sample_meta$Phenotype <- as.factor(sample_meta$Phenotype)
+  dds <- DESeqDataSetFromMatrix(countData = DESeq_count, colData = sample_meta,
+                              design = ~ Phenotype + Sex + Age + BMI + DAS + Alcohol + Smoking + Disease_duration + total_score)
+}
+
+dds <- DESeq(dds)
+
+##exporting normalized count
+temp <- estimateSizeFactors(dds)
+counts = counts(temp, normalized=TRUE)
+counts_log <- log2(counts)
+
+##filtering the species (removing the species who have over the 80% of log2 normalized counts < 2 (== 0), in each case and control group)
+case_sam <- which(sample_meta$total_score == "1")
+control_sam <- which(sample_meta$total_score == "2")
+
+filtertaxa <- c()
+total_counts <- matrix(NA, nrow=nrow(counts(dds)), ncol=2)
+Over_thr <- 0.9
+
+for(i in 1:nrow(counts)){
+  
+  Under_count_con <- length(which(log2(counts[i,control_sam]) < 2))
+  total_counts[i,2] <- Under_count_con
+  
+  Under_count_case <- length(which(log2(counts[i,case_sam]) < 2))
+  total_counts[i,1] <- Under_count_case
+  if( Under_count_case > (Over_thr*length(case_sam)) & Under_count_con > (Over_thr*length(control_sam)) ){
+    filtertaxa <- c(filtertaxa, i)
+    
+  }
+}
+
+total_counts <- total_counts %>% as.data.frame()
+rownames(total_counts) <- rownames(counts)
+colnames(total_counts)[1] <- "Under_count_case"
+colnames(total_counts)[2] <- "Under_count_con"
+total_counts$name <- rownames(total_counts)
+total_counts$name = gsub(";__",";u__",total_counts$name)
+
+##results ## association 1 based 2
+res <- results(dds, contrast = c("total_score","1","2"))
+res$name <- rownames(res)
+res$name = gsub(";__",";u__",res$name)
+
+res <- res %>% as.data.frame()
+
+res <- left_join(res, total_counts,by="name") %>% .[,c(7:9,1:6)]
+res$padj <- p.adjust( res$pvalue, method="BH" )
+
+file_name_csv_allP <- paste(OUT_DIR, "/", "level-", level, "_",mode,"_IBD_allP_", m_name, ".csv", sep="")
+
+write.csv(res, file = file_name_csv_allP,
+          row.names = T)
+
+
+ #extracting the normalized count of all taxa
+
+nor_count_name <- paste(OUT_DIR,
+                   "/", "level-", level, "_",mode,"_IBD_nor_count_",
+                   m_name, "_log2.csv",
+                   sep="")
+
+write.csv(counts_log, file= nor_count_name, row.names = T)
+
+#### After filtering taxa
+filtered_DESeq_count <- DESeq_count[-filtertaxa,]
+
+if (mode == "vsControl") {
+  new_dds <- DESeqDataSetFromMatrix(countData = filtered_DESeq_count, colData = sample_meta,
+                              design = ~ Sex + Age + BMI + Alcohol + Smoking + total_score)
+} else if (mode == "vsMF") {
+  new_dds <- DESeqDataSetFromMatrix(countData = filtered_DESeq_count, colData = sample_meta,
+                              design = ~ Phenotype + Sex + Age + BMI + DAS + Alcohol + Smoking + Disease_duration + total_score)
+}
+
+new_dds <- DESeq(new_dds)
+##exporting normalized count
+new_temp <- estimateSizeFactors(new_dds)
+new_counts = counts(new_temp, normalized=TRUE)
+new_counts_log <- log2(new_counts)
+
+##results ## association 1 based 2
+new_res <- results(new_dds, contrast = c("total_score","1","2"))
+new_res$name <- rownames(new_res)
+new_res$name = gsub(";__",";u__",new_res$name)
+
+new_res$padj <- p.adjust( new_res$pvalue, method="BH" )
+# total_counts[-filtertaxa,] %>% nrow
+# total_counts[filtertaxa,]
+
+filtered_taxa_df <- matrix(NA, nrow=nrow(total_counts[filtertaxa,]), ncol=7)%>% as.data.frame()
+filtered_taxa_df[,7] <- total_counts[filtertaxa,] %>% .$name
+colnames(filtered_taxa_df) <- new_res %>% colnames()
+new_res <- new_res %>% as.data.frame()
+rownames(filtered_taxa_df) <- filtered_taxa_df$name
+
+new_res_total <- rbind(new_res,filtered_taxa_df)
+new_file_name_csv_allP <- paste(OUT_DIR, "/", "level-", level, "_",mode,"_IBD_allP_", m_name, "_filtered.csv", sep="")
+
+write.csv(new_res_total, file = new_file_name_csv_allP,
+          row.names = T)
+
+#extracting the normalized count of all taxa
+
+new_nor_count_name <- paste(OUT_DIR,
+                   "/", "level-", level, "_",mode,"_IBD_nor_count_",
+                   m_name, "_log2_filtered.csv",
+                   sep="")
+
+write.csv(new_counts_log, file= new_nor_count_name, row.names = T)
+}
+
+if (comparing_mode == "vsControl") {
+  if (Pheno_name == "OR") {
+  or_c <- metadata %>% mutate(total_score = case_when(Sig_Ax == 1 | Sig_Dp == 1 ~ 1, Sig_Ax == 2 & Sig_Dp == 2 ~ 2))
+  or_c <- or_c %>% filter(total_score == 1 | total_score == 2)
+  DESeq_nor(or_c,level,Pheno_name,outdir,comparing_mode)
+} else if (Pheno_name == "IBD") {
+  IBD_c <- metadata %>% mutate(total_score = case_when(Phenotype == 1 ~ 1, Phenotype == 0 ~ 2))
+  IBD_c <- IBD_c %>% filter(total_score == 1 | total_score == 2)
+  DESeq_nor(IBD_c,level,Pheno_name,outdir,comparing_mode)
+} else if (Pheno_name == "MF") {
+  mf_c <- metadata %>% mutate(total_score = case_when(Sig_Ax == 0 & Sig_Dp == 0 ~ 1, Sig_Ax == 2 & Sig_Dp == 2 ~ 2))
+  mf_c <- mf_c %>% filter(total_score == 1 | total_score == 2)
+  DESeq_nor(mf_c,level,Pheno_name,outdir,comparing_mode)
+}
+} else if (comparing_mode == "vsMF") {
+  if (Pheno_name == "OR") {
+    or_m <- metadata %>% mutate(total_score = case_when(Sig_Ax == 1 | Sig_Dp == 1 ~ 1, Sig_Ax == 0 & Sig_Dp == 0 ~ 2))
+    or_m <- or_m %>% filter(total_score == 1 | total_score == 2)
+    DESeq_nor(or_m,level,Pheno_name,outdir,comparing_mode)
+}
+}
+
+Date <- system("date '+%F  %r' | cut -d ' ' -f 1",intern = T)
+SCR <- "DESEQ_analysis_vsAll_Phenotype_w_filter_v_r2_2.Rscript"
+paste0("echo \"",Date," ",SCR," ",meta_DIR," ",metafile," ",outdir," ",comparing_mode," ",Pheno_name," ",clinic_file,"\""," > ",outdir,"/",SCR,".",Pheno_name,".history") %>% system()
