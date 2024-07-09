@@ -1,0 +1,90 @@
+#! /usr/bin/Rscript
+args = commandArgs(TRUE)
+
+library( "dplyr" )
+library("RNOmni")
+
+clinic <- args[1]
+PC <- args[2]
+taxa <- args[3]
+OUT_DIR <- args[4]
+k <- args[5]
+i <- args[6]
+
+clinic_table = read.table(clinic,header=T,sep='\t',stringsAsFactors=F)
+PC_table = read.table(PC,header=F, stringsAsFactors=F)
+taxa_norm = read.table(taxa,header=T,sep=',',stringsAsFactors=F)
+
+clinic_table = clinic_table %>% mutate(Sig_OR = case_when(.$Sig_Ax == 0 & .$Sig_Dp == 0 ~ 0,.$Sig_Ax == 1 | .$Sig_Dp == 1 ~ 1))
+
+names(PC_table)[3:22] <- paste0("PC",1:20)
+
+taxa_norm$X = gsub("\\;__","\\;u__",taxa_norm$X)
+taxa_norm$X = gsub("d__","",taxa_norm$X)
+
+taxa_table = taxa_norm[,-1] %>% t %>% as.data.frame
+taxa_table = taxa_table %>% mutate(id=rownames(taxa_table))
+only_taxa = taxa_table[,c(1:length(taxa_norm$X))]
+rank_result = matrix(NA, nrow=nrow(only_taxa), ncol = ncol(only_taxa))
+int_result = matrix(NA, nrow=nrow(only_taxa), ncol = ncol(only_taxa))
+
+for(j in 1:length(only_taxa[1,])){
+  rank_result[,j] <- rank(only_taxa[,j])
+  int_result[,j] <- RankNorm(rank(only_taxa[,j]))
+}
+
+#Rank
+colnames(rank_result) <- taxa_norm$X
+rank_result = rank_result %>% as.data.frame %>% mutate(IID = taxa_table$id)
+
+tmp2 = left_join(clinic_table,rank_result, by=c("SampleID"="IID"))
+final = left_join(tmp2, PC_table, by=c("SampleID"="V1"))
+final$PID = rep(0,nrow(final))
+final$MID = rep(0,nrow(final))
+colnames(final)[1]<-"#FID"
+colnames(final)[which(colnames(final)=="V2")] <-"IID"
+
+num = final %>% as.data.frame %>% dim
+IID_num = which(colnames(final)=="IID")
+final = final[,c(1,IID_num,num[2]-1,num[2],2:(IID_num-1),(IID_num+1):(num[2]-2))]
+
+#Rank inverse normal transformation
+colnames(int_result) <- taxa_norm$X
+int_result = int_result %>% as.data.frame %>% mutate(IID = taxa_table$id)
+
+tmp2_i = left_join(clinic_table,int_result, by=c("SampleID"="IID"))
+final_i = left_join(tmp2_i, PC_table, by=c("SampleID"="V1"))
+
+final_i$PID = rep(0,nrow(final_i))
+final_i$MID = rep(0,nrow(final_i))
+colnames(final_i)[1]<-"#FID"
+colnames(final_i)[which(colnames(final_i)=="V2")] <-"IID"
+
+int_num = final_i %>% as.data.frame %>% dim
+int_IID_num = which(colnames(final_i)=="IID")
+
+final_i = final_i[,c(1,int_IID_num,int_num[2]-1,int_num[2],2:(int_IID_num-1),(int_IID_num+1):(int_num[2]-2))]
+
+if (k == 1){
+
+write.table(final, file=paste0(OUT_DIR,"/IBD_level-",i,"_rank_DESEQ.ped"),sep='\t', col.names=T, row.names=F,quote=F)
+write.table(final_i, file=paste0(OUT_DIR,"/IBD_level-",i,"_rank_inv_DESEQ.ped"),sep='\t', col.names=T, row.names=F,quote=F)
+  
+} else if (k ==2){
+  
+UC_final = final %>% filter(Phenotype == 1)
+write.table(UC_final, file=paste0(OUT_DIR,"/UC_level-",i,"_rank_DESEQ.ped"),sep='\t', col.names=T, row.names=F,quote=F)
+UC_final_i = final_i %>% filter(Phenotype == 1)
+write.table(UC_final_i, file=paste0(OUT_DIR,"/UC_level-",i,"_rank_inv_DESEQ.ped"),sep='\t', col.names=T, row.names=F,quote=F)
+
+} else if (k==3){
+
+CD_final = final %>% filter(Phenotype == 2)
+write.table(CD_final, file=paste0(OUT_DIR,"/CD_level-",i,"_rank_DESEQ.ped"),sep='\t', col.names=T, row.names=F,quote=F)  
+
+CD_final_i = final_i %>% filter(Phenotype == 2)
+write.table(CD_final_i, file=paste0(OUT_DIR,"/CD_level-",i,"_rank_inv_DESEQ.ped"),sep='\t', col.names=T, row.names=F,quote=F)  
+
+} else {
+  print('error')
+}
